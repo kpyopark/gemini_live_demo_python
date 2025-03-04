@@ -1,0 +1,6 @@
+google-genai
+python-dotenv
+numpy
+wave
+sounddevice
+#pyaudio
