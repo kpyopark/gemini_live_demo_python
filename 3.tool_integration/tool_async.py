@@ -145,6 +145,32 @@ async def main():
                                         audio_data = np.frombuffer(part.inline_data.data, dtype=DTYPE)
                                         await asyncio.to_thread(output_stream.write, audio_data)
                                         #output_stream.write(audio_data) # await 불필요
+                            if response.tool_call:
+                                print('tool call received.')
+                                tool_response = []
+                                for function_call in response.tool_call.function_calls:
+                                    print(function_call)
+                                    # tool_response : 
+                                    #     function_responses : Array(1)
+                                    #         0 : 
+                                    #             id : "function-call-3937553967149120411"
+                                    #             name : "get_stock_price"
+                                    #             response : 
+                                    #                 result : 
+                                    #                     object_value : 
+                                    #                         error : "Error fetching stock price for AAPL: Finnhub API failed with status: 401"
+                                    function_response = FunctionResponse(
+                                        name=function_call.name,
+                                        id=function_call.id,
+                                        response={
+                                            "result" : {
+                                                "object_value" : get_current_weather_impl("Seoul")
+                                            }
+                                        }
+                                    )
+                                    live_function_response = LiveClientToolResponse(function_responses=[function_response])
+                                    print(live_function_response)
+                                    await session.send(input=live_function_response, end_of_turn=True)
 
                             if server_content and server_content.turn_complete:
                                 print("Turn complete")
