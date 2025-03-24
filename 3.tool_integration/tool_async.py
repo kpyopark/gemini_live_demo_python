@@ -51,18 +51,44 @@ get_current_weather = FunctionDeclaration(
     }
 )
 
-system_instruction = """You are a helpful AI assistant with multimodal capabilities.
+def log_conversation_in_history_impl(conversation) -> dict[str, str] :
+    """Get the conversation history log"""
+    print(f"Getting conversation history log for {conversation}")
+    return {
+        "log": "success"
+    }
+
+log_conversation_in_history = FunctionDeclaration(
+    name="log_conversation_in_history",
+    description="Before to talk, please log the planned conversation you will talk. ",
+    parameters={
+        "type": "OBJECT",
+        "properties": {"conversation": {"type": "STRING", "description": "statements for AI assistant to talk"}},
+    }
+)
+
+system_instruction = """You are a helpful Korean AI assistant with multimodal capabilities.
 
 You have the following tools available to you:
 - get_current_weather: Get current weather information for a city
 
 Rules:
+- You are in Korea. You should say in Korean when you read numbers.
 - Whenever you're asked about the weather you MUST use the get_current_weather tool.
+- Please speak in Korean.
+- You should read numbers in Korean. For example, 2.0 should be read as "이점영.". Gemini should be read as "제미니.". "22도" should be read as "이십이도."
+- You should log the conversation history before you talk. You can use the log_conversation_in_history tool to do this.
+- If you have already log your conversation into history, do not repeat the same conversation into speaking.
+- Do not repeat the same conversation into speaking.
 """
+
+generation_config = {
+    "temperature": 0.35,
+}
 
 config = LiveConnectConfig(
     response_modalities=["AUDIO"],
-    tools=[Tool(function_declarations=[get_current_weather], code_execution={})],
+    tools=[Tool(function_declarations=[get_current_weather, log_conversation_in_history], code_execution={})],
     system_instruction=Content(role="model", parts=[Part(text=system_instruction)]),
     speech_config=SpeechConfig(
         voice_config=VoiceConfig(
@@ -71,6 +97,7 @@ config = LiveConnectConfig(
             )
         )
     ),
+    generation_config=generation_config
 )
 
 MODEL = "models/gemini-2.0-flash-exp"
@@ -92,20 +119,6 @@ async def main():
             client.aio.live.connect(model=MODEL, config=config) as session, # config를 소문자로 수정
             asyncio.TaskGroup() as tg,
         ):
-            # input_stream = await asyncio.to_thread(
-            #     sd.InputStream,
-            #     samplerate=SAMPLE_RATE,
-            #     channels=CHANNELS,
-            #     dtype=DTYPE
-            # )
-            # output_stream = await asyncio.to_thread( # asyncio.to_thread 사용
-            #     sd.OutputStream,
-            #     samplerate=SAMPLE_RATE,
-            #     channels=CHANNELS,
-            #     dtype=DTYPE
-            # )
-            # input_stream.start()
-            # output_stream.start() # 스트림 시작
 
             async def listen_and_send():
                 print('start listen_and_send')
@@ -120,7 +133,7 @@ async def main():
                                     print("Audio input overflowed!")
                                 # data는 numpy array이므로 bytes로 변환해야 함
                                 data_bytes = data.tobytes()
-                                print('audio input received. length of byte : ', len(data_bytes))
+                                #print('audio input received. length of byte : ', len(data_bytes))
                                 await session.send(input={"data": data_bytes, "mime_type": "audio/pcm"},end_of_turn=True)
                             except OSError as e:
                                 print(f"Audio input error: {e}")
@@ -147,30 +160,45 @@ async def main():
                                         #output_stream.write(audio_data) # await 불필요
                             if response.tool_call:
                                 print('tool call received.')
-                                tool_response = []
+                                # id='function-call-3494351139624454581' args={'location': '서울'} name='get_current_weather'
+                                function_responses = []
                                 for function_call in response.tool_call.function_calls:
                                     print(function_call)
-                                    # tool_response : 
-                                    #     function_responses : Array(1)
-                                    #         0 : 
-                                    #             id : "function-call-3937553967149120411"
-                                    #             name : "get_stock_price"
-                                    #             response : 
-                                    #                 result : 
-                                    #                     object_value : 
-                                    #                         error : "Error fetching stock price for AAPL: Finnhub API failed with status: 401"
-                                    function_response = FunctionResponse(
-                                        name=function_call.name,
-                                        id=function_call.id,
-                                        response={
-                                            "result" : {
-                                                "object_value" : get_current_weather_impl("Seoul")
+                                    if function_call.name == "get_current_weather":
+                                        if 'location' in function_call.args:
+                                            location = function_call.args['location']
+                                        else:
+                                            location = "Seoul"
+                                        function_response = FunctionResponse(
+                                            name=function_call.name,
+                                            id=function_call.id,
+                                            response={
+                                                "result" : {
+                                                    "object_value" : get_current_weather_impl(location=location)
+                                                }
                                             }
-                                        }
-                                    )
-                                    live_function_response = LiveClientToolResponse(function_responses=[function_response])
-                                    print(live_function_response)
-                                    await session.send(input=live_function_response, end_of_turn=True)
+                                        )
+                                        function_responses.append(function_response)
+                                    elif function_call.name == "log_conversation_in_history":
+                                        if 'conversation' in function_call.args:
+                                            conversation = function_call.args['conversation']
+                                        else:
+                                            conversation = "None"
+                                        function_response = FunctionResponse(
+                                            name=function_call.name,
+                                            id=function_call.id,
+                                            response={
+                                                "result" : {
+                                                    "object_value" : log_conversation_in_history_impl(conversation=conversation)
+                                                }
+                                            }
+                                        )
+                                        function_responses.append(function_response)
+
+
+                                live_function_response = LiveClientToolResponse(function_responses=[function_response])
+                                print(live_function_response)
+                                await session.send(input=live_function_response, end_of_turn=True)
 
                             if server_content and server_content.turn_complete:
                                 print("Turn complete")
